@@ -1,4 +1,5 @@
-import { chromium } from 'playwright';
+import { Page } from 'playwright';
+import { getBrowser } from './browser.js';
 
 type InstagramPost = {
     postUrl: string | null;
@@ -37,11 +38,12 @@ function extractCount(text: string, label: string): string | null {
     return match?.[1]?.trim() || null;
 }
 
-function extractFullNameFromOgTitle(ogTitle: string | null, username: string): string | null {
+function extractFullNameFromOgTitle(
+    ogTitle: string | null,
+    username: string
+): string | null {
     if (!ogTitle) return null;
 
-    // Ejemplo:
-    // National Geographic (@natgeo) • Instagram photos and videos
     const match = ogTitle.match(/^(.*?)\s+\(@/);
     const fullName = match?.[1]?.trim() || null;
 
@@ -55,14 +57,20 @@ function extractFullNameFromOgTitle(ogTitle: string | null, username: string): s
 function extractBioFromDescription(description: string | null): string | null {
     if (!description) return null;
 
-    // Meta description suele venir así:
-    // 274M Followers, 193 Following, 31,558 Posts - Step into wonder...
-    // o en español:
-    // 274 M seguidores, 193 seguidos, 31.558 publicaciones - ...
     const parts = description.split(' - ');
     if (parts.length < 2) return null;
 
-    return cleanText(parts.slice(1).join(' - '));
+    const candidate = cleanText(parts.slice(1).join(' - '));
+    if (!candidate) return null;
+
+    if (
+        candidate.includes('Ver fotos y videos de Instagram') ||
+        candidate.includes('See Instagram photos and videos')
+    ) {
+        return null;
+    }
+
+    return candidate;
 }
 
 function parseCountsFromDescription(description: string | null): {
@@ -78,48 +86,112 @@ function parseCountsFromDescription(description: string | null): {
         };
     }
 
-    const followers =
-        extractCount(description, 'Followers') ||
-        extractCount(description, 'seguidores');
-
-    const following =
-        extractCount(description, 'Following') ||
-        extractCount(description, 'seguidos');
-
-    const postsCount =
-        extractCount(description, 'Posts') ||
-        extractCount(description, 'publicaciones');
-
     return {
-        followers,
-        following,
-        postsCount
+        followers:
+            extractCount(description, 'Followers') ||
+            extractCount(description, 'seguidores'),
+        following:
+            extractCount(description, 'Following') ||
+            extractCount(description, 'seguidos'),
+        postsCount:
+            extractCount(description, 'Posts') ||
+            extractCount(description, 'publicaciones')
     };
+}
+
+async function optimizePage(page: Page): Promise<void> {
+    await page.route('**/*', async (route) => {
+        const request = route.request();
+        const resourceType = request.resourceType();
+        const url = request.url();
+
+        if (
+            ['font', 'stylesheet'].includes(resourceType) ||
+            url.includes('google-analytics.com') ||
+            url.includes('doubleclick.net') ||
+            url.includes('connect.facebook.net') ||
+            url.includes('facebook.com/tr')
+        ) {
+            await route.abort();
+            return;
+        }
+
+        await route.continue();
+    });
+}
+
+async function collectPostLinks(page: Page, maxPosts = 10): Promise<InstagramPost[]> {
+    const posts: InstagramPost[] = [];
+    const seen = new Set<string>();
+
+    await page.waitForSelector('article', { timeout: 10000 }).catch(() => { });
+
+    for (let attempt = 0; attempt < 8 && posts.length < maxPosts; attempt++) {
+        const postAnchors = page.locator('a[href*="/p/"], a[href*="/reel/"]');
+        const totalAnchors = await postAnchors.count();
+
+        for (let i = 0; i < totalAnchors && posts.length < maxPosts; i++) {
+            const anchor = postAnchors.nth(i);
+
+            const href = await anchor.getAttribute('href').catch(() => null);
+            if (!href) continue;
+
+            const postUrl = href.startsWith('http')
+                ? href
+                : `https://www.instagram.com${href}`;
+
+            if (seen.has(postUrl)) continue;
+            seen.add(postUrl);
+
+            const img = anchor.locator('img').first();
+            const imageUrl = cleanText(await img.getAttribute('src').catch(() => null));
+            const caption = cleanText(await img.getAttribute('alt').catch(() => null));
+
+            posts.push({
+                postUrl,
+                imageUrl,
+                caption
+            });
+        }
+
+        if (posts.length >= maxPosts) break;
+
+        await page.evaluate(() => {
+            window.scrollBy(0, window.innerHeight * 1.5);
+        });
+
+        await page.waitForTimeout(1200);
+    }
+
+    return posts.slice(0, maxPosts);
 }
 
 export async function scrapeInstagramProfile(
     username: string
 ): Promise<InstagramScrapeResult> {
-    const browser = await chromium.launch({
-        headless: false
-    });
+    const browser = await getBrowser();
 
     const context = await browser.newContext({
-        storageState: 'cookies/instagram-state.json'
+        storageState: 'cookies/instagram-state.json',
+        viewport: { width: 1280, height: 1800 },
+        userAgent:
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
     });
 
     const page = await context.newPage();
 
     try {
+        await optimizePage(page);
+
         await page.goto(`https://www.instagram.com/${username}/`, {
             waitUntil: 'domcontentloaded',
-            timeout: 30000
+            timeout: 20000
         });
 
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(1800);
+        await page.waitForSelector('article', { timeout: 10000 }).catch(() => { });
 
         const currentUrl = page.url();
-
         if (currentUrl.includes('/accounts/login')) {
             throw new Error('La sesión expiró. Vuelve a ejecutar npm run save:session');
         }
@@ -130,71 +202,64 @@ export async function scrapeInstagramProfile(
             bodyText.includes('This account is private') ||
             bodyText.includes('Esta cuenta es privada');
 
-        const privateMessage = isPrivate
-            ? 'Este perfil está en privado'
-            : null;
+        const privateMessage = isPrivate ? 'Este perfil está en privado' : null;
 
         const ogTitle = cleanText(
-            await page.locator('meta[property="og:title"]').getAttribute('content').catch(() => null)
+            await page
+                .locator('meta[property="og:title"]')
+                .getAttribute('content')
+                .catch(() => null)
         );
 
         const ogDescription = cleanText(
-            await page.locator('meta[property="og:description"]').getAttribute('content').catch(() => null)
+            await page
+                .locator('meta[property="og:description"]')
+                .getAttribute('content')
+                .catch(() => null)
         );
 
-        const profilePicUrl = cleanText(
-            await page.locator('meta[property="og:image"]').getAttribute('content').catch(() => null)
-        ) || cleanText(
-            await page.locator('header img').first().getAttribute('src').catch(() => null)
-        );
+        const profilePicUrl =
+            cleanText(
+                await page
+                    .locator('meta[property="og:image"]')
+                    .getAttribute('content')
+                    .catch(() => null)
+            ) ||
+            cleanText(
+                await page.locator('header img').first().getAttribute('src').catch(() => null)
+            );
 
         const fullName =
             extractFullNameFromOgTitle(ogTitle, username) ||
-            cleanText(await page.locator('header h1').first().textContent().catch(() => null)) ||
-            cleanText(await page.locator('header h2').first().textContent().catch(() => null)) ||
+            cleanText(
+                await page.locator('header h1').first().textContent().catch(() => null)
+            ) ||
+            cleanText(
+                await page.locator('header h2').first().textContent().catch(() => null)
+            ) ||
             username;
 
         const bio =
             extractBioFromDescription(ogDescription) ||
-            cleanText(await page.locator('header section div span').first().textContent().catch(() => null)) ||
-            cleanText(await page.locator('header div span').nth(1).textContent().catch(() => null)) ||
+            cleanText(
+                await page
+                    .locator('header section div span')
+                    .first()
+                    .textContent()
+                    .catch(() => null)
+            ) ||
+            cleanText(
+                await page
+                    .locator('header div span')
+                    .nth(1)
+                    .textContent()
+                    .catch(() => null)
+            ) ||
             null;
 
         const { followers, following, postsCount } = parseCountsFromDescription(ogDescription);
 
-        const posts: InstagramPost[] = [];
-
-        if (!isPrivate) {
-            await page.waitForTimeout(2000);
-
-            const postAnchors = page.locator('a[href*="/p/"]');
-            const totalAnchors = await postAnchors.count();
-            const seen = new Set<string>();
-
-            for (let i = 0; i < totalAnchors && posts.length < 10; i++) {
-                const anchor = postAnchors.nth(i);
-
-                const href = await anchor.getAttribute('href').catch(() => null);
-                if (!href) continue;
-
-                const postUrl = href.startsWith('http')
-                    ? href
-                    : `https://www.instagram.com${href}`;
-
-                if (seen.has(postUrl)) continue;
-                seen.add(postUrl);
-
-                const img = anchor.locator('img').first();
-                const imageUrl = cleanText(await img.getAttribute('src').catch(() => null));
-                const caption = cleanText(await img.getAttribute('alt').catch(() => null));
-
-                posts.push({
-                    postUrl,
-                    imageUrl,
-                    caption
-                });
-            }
-        }
+        const posts = isPrivate ? [] : await collectPostLinks(page, 10);
 
         return {
             profile: {
@@ -202,7 +267,7 @@ export async function scrapeInstagramProfile(
                 fullName,
                 bio,
                 profilePicUrl,
-                coverPhotoUrl: profilePicUrl,
+                coverPhotoUrl: posts[0]?.imageUrl || profilePicUrl,
                 followers,
                 following,
                 postsCount,
@@ -213,13 +278,16 @@ export async function scrapeInstagramProfile(
             scrapedAt: new Date().toISOString()
         };
     } catch (error) {
-        await page.screenshot({
-            path: `debug-${username}.png`,
-            fullPage: true
-        }).catch(() => { });
+        await page
+            .screenshot({
+                path: `debug-${username}.png`,
+                fullPage: true
+            })
+            .catch(() => { });
 
         throw error;
     } finally {
-        await browser.close();
+        await page.close().catch(() => { });
+        await context.close().catch(() => { });
     }
 }
