@@ -1,10 +1,14 @@
 import { Page } from 'playwright';
 import { getBrowser } from './browser.js';
 
+type InstagramPostType = 'image' | 'video' | 'carousel';
+
 type InstagramPost = {
     postUrl: string | null;
     imageUrl: string | null;
     caption: string | null;
+    postType: InstagramPostType;
+    needsDetailFetch: boolean;
 };
 
 type InstagramProfile = {
@@ -54,25 +58,6 @@ function extractFullNameFromOgTitle(
     return fullName;
 }
 
-function extractBioFromDescription(description: string | null): string | null {
-    if (!description) return null;
-
-    const parts = description.split(' - ');
-    if (parts.length < 2) return null;
-
-    const candidate = cleanText(parts.slice(1).join(' - '));
-    if (!candidate) return null;
-
-    if (
-        candidate.includes('Ver fotos y videos de Instagram') ||
-        candidate.includes('See Instagram photos and videos')
-    ) {
-        return null;
-    }
-
-    return candidate;
-}
-
 function parseCountsFromDescription(description: string | null): {
     followers: string | null;
     following: string | null;
@@ -120,6 +105,41 @@ async function optimizePage(page: Page): Promise<void> {
     });
 }
 
+async function extractVisibleBio(page: Page): Promise<string | null> {
+    const candidates = [
+        page.locator('header section div > span').first(),
+        page.locator('header section span').nth(1),
+        page.locator('header div span').nth(2),
+        page.locator('header div span').nth(3)
+    ];
+
+    for (const locator of candidates) {
+        const text = cleanText(await locator.textContent().catch(() => null));
+        if (!text) continue;
+
+        const lower = text.toLowerCase();
+
+        if (
+            lower.includes('followers') ||
+            lower.includes('following') ||
+            lower.includes('posts') ||
+            lower.includes('seguidores') ||
+            lower.includes('seguidos') ||
+            lower.includes('publicaciones')
+        ) {
+            continue;
+        }
+
+        if (lower.startsWith('@') || lower === 'follow' || lower === 'seguir') {
+            continue;
+        }
+
+        return text;
+    }
+
+    return null;
+}
+
 async function collectPostLinks(page: Page, maxPosts = 10): Promise<InstagramPost[]> {
     const posts: InstagramPost[] = [];
     const seen = new Set<string>();
@@ -147,10 +167,35 @@ async function collectPostLinks(page: Page, maxPosts = 10): Promise<InstagramPos
             const imageUrl = cleanText(await img.getAttribute('src').catch(() => null));
             const caption = cleanText(await img.getAttribute('alt').catch(() => null));
 
+            let postType: InstagramPostType = 'image';
+
+            if (href.includes('/reel/')) {
+                postType = 'video';
+            } else {
+                const textContent = (
+                    await anchor.textContent().catch(() => null)
+                )?.toLowerCase() || '';
+
+                const hasCarouselIcon =
+                    (await anchor.locator('svg[aria-label="Carousel"]').count().catch(() => 0)) > 0 ||
+                    (await anchor.locator('svg[aria-label="Carrusel"]').count().catch(() => 0)) > 0;
+
+                const hasVideoIcon =
+                    (await anchor.locator('svg[aria-label="Video"]').count().catch(() => 0)) > 0;
+
+                if (hasCarouselIcon || textContent.includes('carousel') || textContent.includes('carrusel')) {
+                    postType = 'carousel';
+                } else if (hasVideoIcon) {
+                    postType = 'video';
+                }
+            }
+
             posts.push({
                 postUrl,
                 imageUrl,
-                caption
+                caption,
+                postType,
+                needsDetailFetch: postType !== 'image'
             });
         }
 
@@ -160,7 +205,7 @@ async function collectPostLinks(page: Page, maxPosts = 10): Promise<InstagramPos
             window.scrollBy(0, window.innerHeight * 1.5);
         });
 
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(900);
     }
 
     return posts.slice(0, maxPosts);
@@ -188,7 +233,7 @@ export async function scrapeInstagramProfile(
             timeout: 20000
         });
 
-        await page.waitForTimeout(1800);
+        await page.waitForTimeout(1400);
         await page.waitForSelector('article', { timeout: 10000 }).catch(() => { });
 
         const currentUrl = page.url();
@@ -239,23 +284,7 @@ export async function scrapeInstagramProfile(
             ) ||
             username;
 
-        const bio =
-            extractBioFromDescription(ogDescription) ||
-            cleanText(
-                await page
-                    .locator('header section div span')
-                    .first()
-                    .textContent()
-                    .catch(() => null)
-            ) ||
-            cleanText(
-                await page
-                    .locator('header div span')
-                    .nth(1)
-                    .textContent()
-                    .catch(() => null)
-            ) ||
-            null;
+        const bio = (await extractVisibleBio(page)) || null;
 
         const { followers, following, postsCount } = parseCountsFromDescription(ogDescription);
 
@@ -277,15 +306,6 @@ export async function scrapeInstagramProfile(
             posts,
             scrapedAt: new Date().toISOString()
         };
-    } catch (error) {
-        await page
-            .screenshot({
-                path: `debug-${username}.png`,
-                fullPage: true
-            })
-            .catch(() => { });
-
-        throw error;
     } finally {
         await page.close().catch(() => { });
         await context.close().catch(() => { });

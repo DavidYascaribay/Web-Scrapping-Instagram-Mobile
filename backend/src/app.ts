@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { scrapeInstagramProfile } from './services/instagramScraper.js';
 import { scrapePostDetail } from './services/postDetailScraper.js';
-import { closeBrowser } from './services/browser.js';
+import { closeBrowser, getBrowser } from './services/browser.js';
 
 const app = express();
 const PORT = 3000;
@@ -18,8 +18,8 @@ type CacheEntry = {
 const profileCache = new Map<string, CacheEntry>();
 const postDetailCache = new Map<string, CacheEntry>();
 
-const CACHE_TTL_MS = 60 * 1000;
-const DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+const PROFILE_CACHE_TTL_MS = 60 * 1000;
+const POST_DETAIL_CACHE_TTL_MS = 10 * 60 * 1000;
 
 app.get('/', (_req, res) => {
     res.json({ message: 'Backend funcionando' });
@@ -47,7 +47,7 @@ app.get('/api/instagram/:username', async (req, res) => {
 
         profileCache.set(normalizedUsername, {
             data,
-            expiresAt: now + CACHE_TTL_MS
+            expiresAt: now + PROFILE_CACHE_TTL_MS
         });
 
         res.json(data);
@@ -85,7 +85,7 @@ app.get('/api/post-detail', async (req, res) => {
 
         postDetailCache.set(normalizedUrl, {
             data,
-            expiresAt: now + DETAIL_CACHE_TTL_MS
+            expiresAt: now + POST_DETAIL_CACHE_TTL_MS
         });
 
         res.json(data);
@@ -94,6 +94,50 @@ app.get('/api/post-detail', async (req, res) => {
 
         res.status(500).json({
             error: 'No se pudo extraer el detalle del post',
+            detail: error instanceof Error ? error.message : 'Error desconocido'
+        });
+    }
+});
+
+app.get('/api/media', async (req, res) => {
+    try {
+        const { url } = req.query;
+
+        if (!url || typeof url !== 'string') {
+            res.status(400).json({ error: 'Falta la url del media' });
+            return;
+        }
+
+        const browser = await getBrowser();
+        const context = await browser.newContext({
+            storageState: 'cookies/instagram-state.json',
+            userAgent:
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
+        });
+
+        const response = await context.request.get(url);
+
+        if (!response.ok()) {
+            await context.dispose();
+            res.status(response.status()).json({
+                error: 'No se pudo obtener el media'
+            });
+            return;
+        }
+
+        const buffer = await response.body();
+        const contentType = response.headers()['content-type'] || 'application/octet-stream';
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'public, max-age=300');
+        res.send(buffer);
+
+        await context.dispose();
+    } catch (error) {
+        console.error('Error real al servir media:', error);
+
+        res.status(500).json({
+            error: 'No se pudo servir el media',
             detail: error instanceof Error ? error.message : 'Error desconocido'
         });
     }

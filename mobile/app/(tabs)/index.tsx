@@ -15,14 +15,17 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Video, ResizeMode } from 'expo-av';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { fetchInstagramProfile, fetchPostDetail } from '../../services/api';
 import { useAppTheme } from '../../context/ThemeContext';
+import { buildMediaProxyUrl } from '../../services/api';
 
 type Post = {
   postUrl: string | null;
   imageUrl: string | null;
   caption: string | null;
+  postType: 'image' | 'video' | 'carousel';
+  needsDetailFetch: boolean;
 };
 
 type ProfileResponse = {
@@ -51,6 +54,38 @@ type PostDetail = {
   }>;
   caption: string | null;
 };
+
+function PostMedia({ item }: { item: { type: 'image' | 'video'; url: string } }) {
+  const proxiedUrl = buildMediaProxyUrl(item.url);
+
+  const player = useVideoPlayer(
+    item.type === 'video' ? proxiedUrl : null,
+    (playerInstance) => {
+      if (playerInstance) {
+        playerInstance.loop = false;
+      }
+    }
+  );
+
+  if (item.type === 'video') {
+    return (
+      <VideoView
+        player={player}
+        style={styles.modalImage}
+        nativeControls
+        contentFit="contain"
+      />
+    );
+  }
+
+  return (
+    <Image
+      source={{ uri: proxiedUrl }}
+      style={styles.modalImage}
+      resizeMode="contain"
+    />
+  );
+}
 
 export default function HomeScreen() {
   const [username, setUsername] = useState('natgeo');
@@ -113,6 +148,20 @@ export default function HomeScreen() {
       if (!post.postUrl) return;
 
       setSelectedPost(post);
+      setError(null);
+
+      if (post.postType === 'image' && !post.needsDetailFetch) {
+        setPostDetail({
+          postUrl: post.postUrl,
+          type: 'image',
+          items: post.imageUrl
+            ? [{ type: 'image', url: post.imageUrl }]
+            : [],
+          caption: post.caption
+        });
+        return;
+      }
+
       setPostDetail(null);
       setLoadingDetail(true);
 
@@ -256,6 +305,8 @@ export default function HomeScreen() {
     );
   };
 
+  const mediaItems = postDetail?.items || [];
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.bg }]}>
       <View
@@ -396,6 +447,18 @@ export default function HomeScreen() {
                       <Text style={{ color: theme.muted }}>Sin imagen</Text>
                     </View>
                   )}
+
+                  {item.postType === 'video' && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>▶</Text>
+                    </View>
+                  )}
+
+                  {item.postType === 'carousel' && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>📚</Text>
+                    </View>
+                  )}
                 </Pressable>
               )}
             />
@@ -426,38 +489,35 @@ export default function HomeScreen() {
               <ScrollView showsVerticalScrollIndicator={false}>
                 {loadingDetail ? (
                   <ActivityIndicator size="large" color={theme.accent} />
-                ) : postDetail ? (
+                ) : mediaItems.length > 0 ? (
                   <>
-                    {postDetail.items.map((item, index) => (
-                      <View key={`${item.url}-${index}`} style={{ marginBottom: 12 }}>
-                        {item.type === 'video' ? (
-                          <Video
-                            source={{ uri: item.url }}
-                            style={styles.modalImage}
-                            useNativeControls
-                            resizeMode={ResizeMode.CONTAIN}
-                            shouldPlay={false}
-                          />
-                        ) : (
-                          <Image
-                            source={{ uri: item.url }}
-                            style={styles.modalImage}
-                            resizeMode="cover"
-                          />
+                    {mediaItems.length === 1 ? (
+                      <PostMedia item={mediaItems[0]} />
+                    ) : (
+                      <FlatList
+                        data={mediaItems}
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        keyExtractor={(item, index) => `${item.url}-${index}`}
+                        renderItem={({ item }) => (
+                          <View style={{ width: maxContentWidth }}>
+                            <PostMedia item={item} />
+                          </View>
                         )}
-                      </View>
-                    ))}
+                      />
+                    )}
 
                     <Text style={[styles.modalHeading, { color: theme.text }]}>
                       Descripción
                     </Text>
                     <Text style={[styles.modalBody, { color: theme.muted }]}>
-                      {postDetail.caption || selectedPost?.caption || 'Sin descripción'}
+                      {postDetail?.caption || selectedPost?.caption || 'Sin descripción'}
                     </Text>
                   </>
                 ) : (
                   <Text style={[styles.modalBody, { color: theme.muted }]}>
-                    No se pudo cargar el detalle del post.
+                    No se pudo cargar el contenido del post.
                   </Text>
                 )}
               </ScrollView>
@@ -555,15 +615,9 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1
-  },
-  screen: {
-    flex: 1
-  },
-  content: {
-    flex: 1
-  },
+  safe: { flex: 1 },
+  screen: { flex: 1 },
+  content: { flex: 1 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -746,6 +800,19 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2
+  },
+  badge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 3
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 12
   },
   imageFallback: {
     justifyContent: 'center',
