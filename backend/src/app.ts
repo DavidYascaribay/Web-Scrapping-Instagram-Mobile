@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import type { BrowserContext } from 'playwright';
 import { scrapeInstagramProfile } from './services/instagramScraper.js';
 import { scrapePostDetail } from './services/postDetailScraper.js';
 import { closeBrowser, getBrowser } from './services/browser.js';
@@ -100,6 +101,8 @@ app.get('/api/post-detail', async (req, res) => {
 });
 
 app.get('/api/media', async (req, res) => {
+    let context: BrowserContext | null = null;
+
     try {
         const { url } = req.query;
 
@@ -109,7 +112,8 @@ app.get('/api/media', async (req, res) => {
         }
 
         const browser = await getBrowser();
-        const context = await browser.newContext({
+
+        context = await browser.newContext({
             storageState: 'cookies/instagram-state.json',
             userAgent:
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
@@ -118,7 +122,6 @@ app.get('/api/media', async (req, res) => {
         const response = await context.request.get(url);
 
         if (!response.ok()) {
-            await context.dispose();
             res.status(response.status()).json({
                 error: 'No se pudo obtener el media'
             });
@@ -126,20 +129,25 @@ app.get('/api/media', async (req, res) => {
         }
 
         const buffer = await response.body();
-        const contentType = response.headers()['content-type'] || 'application/octet-stream';
+        const contentType =
+            response.headers()['content-type'] || 'application/octet-stream';
 
         res.setHeader('Content-Type', contentType);
         res.setHeader('Cache-Control', 'public, max-age=300');
         res.send(buffer);
-
-        await context.dispose();
     } catch (error) {
         console.error('Error real al servir media:', error);
 
-        res.status(500).json({
-            error: 'No se pudo servir el media',
-            detail: error instanceof Error ? error.message : 'Error desconocido'
-        });
+        if (!res.headersSent) {
+            res.status(500).json({
+                error: 'No se pudo servir el media',
+                detail: error instanceof Error ? error.message : 'Error desconocido'
+            });
+        }
+    } finally {
+        if (context) {
+            await context.close().catch(() => { });
+        }
     }
 });
 

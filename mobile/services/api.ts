@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://192.168.100.19:3000';
+const API_BASE_URL = 'http://192.168.100.8:3000';
 
 export async function fetchInstagramProfile(username: string) {
     const response = await fetch(`${API_BASE_URL}/api/instagram/${username}`);
