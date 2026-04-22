@@ -2,7 +2,9 @@ import { Browser, chromium } from 'playwright';
 
 let browserPromise: Promise<Browser> | null = null;
 
-export async function getBrowser(): Promise<Browser> {
+export async function getBrowser(): Promise<Browser> { 
+//función para obtener una instancia del navegador, reutilizando la misma instancia si ya se ha creado, 
+// y configurando opciones para mejorar la estabilidad en entornos de servidor
     if (!browserPromise) {
         browserPromise = chromium.launch({
             headless: false,

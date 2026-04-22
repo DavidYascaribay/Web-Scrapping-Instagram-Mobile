@@ -11,7 +11,7 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
-type CacheEntry = {
+type CacheEntry = { //estructura para almacenar datos en cache con su fecha de expiración
     data: unknown;
     expiresAt: number;
 };
@@ -19,14 +19,14 @@ type CacheEntry = {
 const profileCache = new Map<string, CacheEntry>();
 const postDetailCache = new Map<string, CacheEntry>();
 
-const PROFILE_CACHE_TTL_MS = 60 * 1000;
-const POST_DETAIL_CACHE_TTL_MS = 10 * 60 * 1000;
+const PROFILE_CACHE_TTL_MS = 60 * 1000; //tiempo de vida del cache de perfiles (1 minuto)
+const POST_DETAIL_CACHE_TTL_MS = 10 * 60 * 1000; //tiempo de vida del cache de detalles de posts (10 minutos)
 
 app.get('/', (_req, res) => {
     res.json({ message: 'Backend funcionando' });
 });
 
-app.get('/api/instagram/:username', async (req, res) => {
+app.get('/api/instagram/:username', async (req, res) => { //1. endpoint para obtener información de un perfil de Instagram dado su username
     try {
         const { username } = req.params;
 
@@ -62,7 +62,7 @@ app.get('/api/instagram/:username', async (req, res) => {
     }
 });
 
-app.get('/api/post-detail', async (req, res) => {
+app.get('/api/post-detail', async (req, res) => { //endpoint para obtener detalles de un post de Instagram dada su url
     try {
         const { url } = req.query;
 
@@ -100,7 +100,7 @@ app.get('/api/post-detail', async (req, res) => {
     }
 });
 
-app.get('/api/media', async (req, res) => {
+app.get('/api/media', async (req, res) => { //endpoint para servir contenido multimedia de Instagram
     let context: BrowserContext | null = null;
 
     try {
@@ -113,7 +113,7 @@ app.get('/api/media', async (req, res) => {
 
         const browser = await getBrowser();
 
-        context = await browser.newContext({
+        context = await browser.newContext({ //crea un nuevo contexto de navegador con estado de cookies para Instagram y un user agent específico para evitar bloqueos
             storageState: 'cookies/instagram-state.json',
             userAgent:
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
@@ -132,7 +132,7 @@ app.get('/api/media', async (req, res) => {
         const contentType =
             response.headers()['content-type'] || 'application/octet-stream';
 
-        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Type', contentType); //establece el tipo de contenido correcto para que el cliente pueda manejarlo adecuadamente
         res.setHeader('Cache-Control', 'public, max-age=300');
         res.send(buffer);
     } catch (error) {
@@ -151,12 +151,12 @@ app.get('/api/media', async (req, res) => {
     }
 });
 
-process.on('SIGINT', async () => {
+process.on('SIGINT', async () => { //maneja la señal de interrupción (Ctrl+C) para cerrar el navegador antes de salir
     await closeBrowser();
     process.exit(0);
 });
 
-process.on('SIGTERM', async () => {
+process.on('SIGTERM', async () => { //maneja la señal de terminación para cerrar el navegador antes de salir
     await closeBrowser();
     process.exit(0);
 });

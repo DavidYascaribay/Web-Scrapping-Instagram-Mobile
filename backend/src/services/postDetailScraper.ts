@@ -13,13 +13,13 @@ type PostDetailResult = {
     caption: string | null;
 };
 
-function cleanText(value: string | null | undefined): string | null {
+function cleanText(value: string | null | undefined): string | null { //limpia el texto eliminando espacios innecesarios y devolviendo null si el resultado es una cadena vacía
     if (!value) return null;
     const text = value.trim();
     return text.length ? text : null;
 }
 
-function isUsefulMediaUrl(url: string): boolean {
+function isUsefulMediaUrl(url: string): boolean { //verifica si la url es probablemente un recurso multimedia útil de Instagram, filtrando urls que no sean de dominios conocidos de Instagram
     return (
         url.includes('cdninstagram') ||
         url.includes('fbcdn.net') ||
@@ -27,13 +27,13 @@ function isUsefulMediaUrl(url: string): boolean {
     );
 }
 
-async function getVisibleMediaFromCurrentSlide(article: Locator): Promise<MediaItem[]> {
+async function getVisibleMediaFromCurrentSlide(article: Locator): Promise<MediaItem[]> { //extrae los recursos multimedia visibles del slide actual, filtrando por tamaño mínimo y evitando imágenes de perfil
     const items: MediaItem[] = [];
 
     const videos = article.locator('video');
     const totalVideos = await videos.count().catch(() => 0);
 
-    for (let i = 0; i < totalVideos; i++) {
+    for (let i = 0; i < totalVideos; i++) { //itera sobre los videos encontrados y aplica filtros para determinar si son recursos útiles
         const locator = videos.nth(i);
         const src = await locator.getAttribute('src').catch(() => null);
         const box = await locator.boundingBox().catch(() => null);
@@ -50,7 +50,7 @@ async function getVisibleMediaFromCurrentSlide(article: Locator): Promise<MediaI
     const images = article.locator('img');
     const totalImages = await images.count().catch(() => 0);
 
-    for (let i = 0; i < totalImages; i++) {
+    for (let i = 0; i < totalImages; i++) { //itera sobre las imágenes encontradas y aplica filtros para determinar si son recursos útiles, evitando imágenes de perfil basándose en el texto alternativo
         const locator = images.nth(i);
         const src = await locator.getAttribute('src').catch(() => null);
         const alt = await locator.getAttribute('alt').catch(() => null);
@@ -77,7 +77,7 @@ async function getVisibleMediaFromCurrentSlide(article: Locator): Promise<MediaI
     return items;
 }
 
-async function findNextButton(article: Locator): Promise<Locator | null> {
+async function findNextButton(article: Locator): Promise<Locator | null> { //busca el botón para ir al siguiente slide
     const selectors = [
         'button[aria-label="Next"]',
         'button[aria-label="Siguiente"]',
@@ -95,7 +95,11 @@ async function findNextButton(article: Locator): Promise<Locator | null> {
     return null;
 }
 
-export async function scrapePostDetail(url: string): Promise<PostDetailResult> {
+export async function scrapePostDetail(url: string): Promise<PostDetailResult> { 
+//función principal para scrapear el detalle de un post de Instagram dada su url, 
+//utilizando Playwright para cargar la página y extraer la información necesaria, 
+//aplicando filtros para obtener solo recursos multimedia útiles y manejando casos 
+//especiales como posts con un solo recurso o sin recursos visibles
     const browser = await getBrowser();
 
     const context = await browser.newContext({

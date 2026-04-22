@@ -1,7 +1,9 @@
 import { chromium } from 'playwright';
 import readline from 'node:readline';
 
-async function main() {
+async function main() { //función principal para abrir una ventana de navegador, 
+// permitir al usuario iniciar sesión manualmente en Instagram, 
+// y luego guardar el estado de la sesión en un archivo para su uso posterior en el scraper
     const browser = await chromium.launch({
         headless: false
     });
@@ -9,14 +11,16 @@ async function main() {
     const context = await browser.newContext();
     const page = await context.newPage();
 
-    await page.goto('https://www.instagram.com/', {
+    await page.goto('https://www.instagram.com/', { 
+        //navega a Instagram y espera a que se cargue el contenido para que el usuario pueda iniciar sesión
         waitUntil: 'domcontentloaded'
     });
 
     console.log('Inicia sesión manualmente en Instagram en la ventana que se abrió.');
     console.log('Cuando ya hayas iniciado sesión y veas tu cuenta cargada, presiona ENTER aquí en la terminal.');
 
-    const rl = readline.createInterface({
+    const rl = readline.createInterface({ 
+        //configura la interfaz de readline para esperar a que el usuario presione ENTER después de iniciar sesión
         input: process.stdin,
         output: process.stdout
     });

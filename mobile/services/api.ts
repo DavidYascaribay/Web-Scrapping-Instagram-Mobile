@@ -11,7 +11,9 @@ export async function fetchInstagramProfile(username: string) {
     return response.json();
 }
 
-export async function fetchPostDetail(postUrl: string) {
+export async function fetchPostDetail(postUrl: string) { 
+    //función para obtener el detalle de un post de Instagram dada su url, 
+    // haciendo una petición al backend y manejando errores
     const response = await fetch(
         `${API_BASE_URL}/api/post-detail?url=${encodeURIComponent(postUrl)}`
     );

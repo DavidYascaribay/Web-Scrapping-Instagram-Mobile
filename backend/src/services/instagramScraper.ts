@@ -30,19 +30,19 @@ type InstagramScrapeResult = {
     scrapedAt: string;
 };
 
-function cleanText(value: string | null | undefined): string | null {
+function cleanText(value: string | null | undefined): string | null { //limpia el texto eliminando espacios innecesarios y devolviendo null si el resultado es vacío
     if (!value) return null;
     const text = value.trim();
     return text.length ? text : null;
 }
 
-function extractCount(text: string, label: string): string | null {
+function extractCount(text: string, label: string): string | null { //intenta extraer un conteo (seguidores, seguidos, posts) del texto dado un label específico (en inglés o español)
     const regex = new RegExp(`([\\d.,]+\\s*[KMB]?)\\s+${label}`, 'i');
     const match = text.match(regex);
     return match?.[1]?.trim() || null;
 }
 
-function extractFullNameFromOgTitle(
+function extractFullNameFromOgTitle( //intenta extraer el nombre completo del título og:title, que suele tener el formato "Nombre Completo (@username) | Instagram"
     ogTitle: string | null,
     username: string
 ): string | null {
@@ -58,7 +58,7 @@ function extractFullNameFromOgTitle(
     return fullName;
 }
 
-function parseCountsFromDescription(description: string | null): {
+function parseCountsFromDescription(description: string | null): { //extrae seguidores, seguidos y cantidad de posts del texto de descripción del perfil
     followers: string | null;
     following: string | null;
     postsCount: string | null;
@@ -84,7 +84,7 @@ function parseCountsFromDescription(description: string | null): {
     };
 }
 
-async function optimizePage(page: Page): Promise<void> {
+async function optimizePage(page: Page): Promise<void> { //evita cargar recursos innecesarios para acelerar el scraping
     await page.route('**/*', async (route) => {
         const request = route.request();
         const resourceType = request.resourceType();
@@ -105,7 +105,7 @@ async function optimizePage(page: Page): Promise<void> {
     });
 }
 
-async function extractVisibleBio(page: Page): Promise<string | null> {
+async function extractVisibleBio(page: Page): Promise<string | null> { //extrae la biografía visible del perfil
     const candidates = [
         page.locator('header section div > span').first(),
         page.locator('header section span').nth(1),
@@ -147,7 +147,7 @@ async function collectPostLinks(page: Page, maxPosts = 10): Promise<InstagramPos
     await page.waitForSelector('article', { timeout: 10000 }).catch(() => { });
 
     for (let attempt = 0; attempt < 8 && posts.length < maxPosts; attempt++) {
-        const postAnchors = page.locator('a[href*="/p/"], a[href*="/reel/"]');
+        const postAnchors = page.locator('a[href*="/p/"], a[href*="/reel/"]'); //scrapea los enlaces de los posts y reels
         const totalAnchors = await postAnchors.count();
 
         for (let i = 0; i < totalAnchors && posts.length < maxPosts; i++) {
@@ -211,7 +211,9 @@ async function collectPostLinks(page: Page, maxPosts = 10): Promise<InstagramPos
     return posts.slice(0, maxPosts);
 }
 
-export async function scrapeInstagramProfile(
+export async function scrapeInstagramProfile( 
+    //función principal para scrapear un perfil de Instagram dado su username, obteniendo información del perfil 
+    // y donde y una lista de posts recientes, manejando casos de perfiles privados y expiración de sesión
     username: string
 ): Promise<InstagramScrapeResult> {
     const browser = await getBrowser();
@@ -228,7 +230,7 @@ export async function scrapeInstagramProfile(
     try {
         await optimizePage(page);
 
-        await page.goto(`https://www.instagram.com/${username}/`, {
+        await page.goto(`https://www.instagram.com/${username}/`, { //abre el perfil de instagram
             waitUntil: 'domcontentloaded',
             timeout: 20000
         });
